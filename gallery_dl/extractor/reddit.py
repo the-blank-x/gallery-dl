@@ -53,11 +53,54 @@ class RedditExtractor(Extractor):
                         text.nameext_from_url(url, submission)
                         yield Message.Url, url, submission
 
+                    # media added with the images/videos submission tab
                     elif "gallery_data" in submission:
                         for submission["num"], url in enumerate(
                                 self._extract_gallery(submission), 1):
                             text.nameext_from_url(url, submission)
                             yield Message.Url, url, submission
+
+                    # media added alongside text
+                    elif "media_metadata" in submission:
+                        media_items = self._extract_media_from_rtjson(
+                            submission["rtjson"]["document"])
+                        handled_by_ytdl = False
+
+                        if videos == "ytdl":
+                            for media_type, _ in media_items:
+                                if media_type == "video":
+                                    handled_by_ytdl = True
+                                    break
+
+                        if handled_by_ytdl:
+                            # TODO have an actual filename
+                            text.nameext_from_url(url, submission)
+                            url = "https://www.reddit.com" + \
+                                submission["permalink"]
+                            yield Message.Url, "ytdl:" + url, submission
+                        else:
+                            num = 1
+                            for media_type, media_id in media_items:
+                                if media_type == "video" and not videos:
+                                    continue
+                                num += 1
+                                url = self._get_gallery_item_url(
+                                    submission, media_id)
+
+                                if not url:
+                                    continue
+                                submission["num"] = num
+                                submission["filename"] = media_id
+                                if media_type == "video":
+                                    submission["extension"] = "mp4"
+                                    submission["_ytdl_extra"] = {
+                                        "title": submission["title"],
+                                    }
+                                    url = "ytdl:" + url
+                                else:
+                                    submission["extension"] = \
+                                        text.ext_from_url(url)
+                                yield Message.Url, url, submission
 
                     elif submission["is_video"]:
                         if videos:
@@ -111,6 +154,32 @@ class RedditExtractor(Extractor):
     def submissions(self):
         """Return an iterable containing all (submission, comments) tuples"""
 
+    def _get_gallery_item_url(self, submission, media_id):
+        data = submission["media_metadata"][media_id]
+        if data["status"] != "valid" or \
+                ("s" not in data and data["e"] != "RedditVideo"):
+            self.log.warning(
+                "gallery %s: skipping item %s ('status: %s')",
+                submission["id"], media_id, data.get("status"))
+            return
+
+        src = None
+        if data["e"] == "RedditVideo":
+            url = data.get("dashUrl") or data.get("hlsUrl")
+        else:
+            src = data["s"]
+            url = src.get("u") or src.get("gif") or src.get("mp4")
+            if url:
+                url = url.partition("?")[0].replace("/preview.", "/i.", 1)
+
+        if url:
+            return url
+        else:
+            self.log.error(
+                "gallery %s: unable to fetch download URL for item %s",
+                submission["id"], media_id)
+            self.log.debug(src or data)
+
     def _extract_gallery(self, submission):
         gallery = submission["gallery_data"]
         if gallery is None:
@@ -124,21 +193,20 @@ class RedditExtractor(Extractor):
             return
 
         for item in gallery["items"]:
-            data = meta[item["media_id"]]
-            if data["status"] != "valid" or "s" not in data:
-                self.log.warning(
-                    "gallery %s: skipping item %s ('status: %s')",
-                    submission["id"], item["media_id"], data.get("status"))
-                continue
-            src = data["s"]
-            url = src.get("u") or src.get("gif") or src.get("mp4")
+            url = self._get_gallery_item_url(submission, item["media_id"])
             if url:
-                yield url.partition("?")[0].replace("/preview.", "/i.", 1)
-            else:
-                self.log.error(
-                    "gallery %s: unable to fetch download URL for item %s",
-                    submission["id"], item["media_id"])
-                self.log.debug(src)
+                yield url
+
+    def _extract_media_from_rtjson(self, rtjson):
+        media_items = []
+
+        for item in rtjson:
+            if item["e"] == "img" or item["e"] == "video":
+                media_items.append((item["e"], item["id"]))
+            elif isinstance(item, list):
+                media_items.extend(self._extract_media_from_rtjson(item["c"]))
+
+        return media_items
 
 
 class RedditSubredditExtractor(RedditExtractor):
@@ -245,6 +313,10 @@ class RedditSubmissionExtractor(RedditExtractor):
         ("https://www.reddit.com/r/kpopfap/comments/qjj04q/", {
             "count": 0,
         }),
+        # media inside text posts (#2815)
+        ("https://www.reddit.com/r/test/comments/wmgk7i", {
+            "count": 3,
+        }),
         ("https://old.reddit.com/r/lavaporn/comments/2a00np/"),
         ("https://np.reddit.com/r/lavaporn/comments/2a00np/"),
         ("https://m.reddit.com/r/lavaporn/comments/2a00np/"),
@@ -329,7 +401,8 @@ class RedditAPI():
         """Fetch the (submission, comments)=-tuple for a submission id"""
         endpoint = "/comments/" + submission_id + "/.json"
         link_id = "t3_" + submission_id if self.morecomments else None
-        submission, comments = self._call(endpoint, {"limit": self.comments})
+        submission, comments = self._call(endpoint, {
+            "limit": self.comments, "rtj": 1})
         return (submission["data"]["children"][0]["data"],
                 self._flatten(comments, link_id) if self.comments else ())
 
@@ -337,12 +410,14 @@ class RedditAPI():
         """Collect all (submission, comments)-tuples of a subreddit"""
         endpoint = subreddit + "/.json"
         params["limit"] = 100
+        params["rtj"] = 1
         return self._pagination(endpoint, params)
 
     def submissions_user(self, user, params):
         """Collect all (submission, comments)-tuples posted by a user"""
         endpoint = "/user/" + user + "/.json"
         params["limit"] = 100
+        params["rtj"] = 1
         return self._pagination(endpoint, params)
 
     def morechildren(self, link_id, children):
