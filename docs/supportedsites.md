@@ -140,6 +140,12 @@ Consider all listed sites to potentially be NSFW.
     <td></td>
 </tr>
 <tr>
+    <td>Comicfury</td>
+    <td>https://comicfury.com</td>
+    <td>Comic Issues, Comics</td>
+    <td></td>
+</tr>
+<tr>
     <td>Coomer</td>
     <td>https://coomer.party/</td>
     <td>Favorites, Posts, User Profiles</td>
