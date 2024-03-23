@@ -93,4 +93,10 @@ __tests__ = (
     "#sha1_content": "0c1937e4d177ce55afbfe30ab9376700c6cf619f",
 },
 
+{
+    "#url"     : "https://bloomer-layout.cfw.me",
+    "#category": ("", "comicfury", "comic"),
+    "#class"   : comicfury.ComicfuryComicExtractor,
+},
+
 )

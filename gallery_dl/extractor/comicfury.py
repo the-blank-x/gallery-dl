@@ -14,7 +14,7 @@ from .. import text
 
 CF_DOMAINS = (
     r"([\w-]+)\.(?:thecomicseries\.com|the-comic\.org"
-    r"|thecomicstrip\.org|webcomic\.ws)"
+    r"|thecomicstrip\.org|webcomic\.ws|cfw\.me)"
 )
 
 
